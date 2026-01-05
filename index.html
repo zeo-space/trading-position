@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Position Calculator</title>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        // Lucide icons as inline SVG components
+        const Calculator = () => (
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4" y="2" width="16" height="20" rx="2"/>
+                <line x1="8" y1="6" x2="16" y2="6"/>
+                <line x1="16" y1="14" x2="16" y2="14.01"/>
+                <line x1="12" y1="14" x2="12" y2="14.01"/>
+                <line x1="8" y1="14" x2="8" y2="14.01"/>
+                <line x1="16" y1="18" x2="16" y2="18.01"/>
+                <line x1="12" y1="18" x2="12" y2="18.01"/>
+                <line x1="8" y1="18" x2="8" y2="18.01"/>
+            </svg>
+        );
+
+        const TrendingUp = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                <polyline points="17 6 23 6 23 12"/>
+            </svg>
+        );
+
+        const TrendingDown = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
+                <polyline points="17 18 23 18 23 12"/>
+            </svg>
+        );
+
+        function TradingCalculator() {
+            const [tradeType, setTradeType] = useState('long');
+            const [entryPrice, setEntryPrice] = useState('');
+            const [stopLoss, setStopLoss] = useState('');
+            const [maxLoss, setMaxLoss] = useState('');
+            const [minUnit, setMinUnit] = useState('0.001');
+            const [makerFee, setMakerFee] = useState('0.02');
+            const [takerFee, setTakerFee] = useState('0.05');
+            const [result, setResult] = useState(null);
+
+            const calculate = () => {
+                const entry = parseFloat(entryPrice);
+                const stop = parseFloat(stopLoss);
+                const loss = parseFloat(maxLoss);
+                const minTradingUnit = parseFloat(minUnit);
+                const makerFeeRate = parseFloat(makerFee) / 100; // Convert percentage to decimal
+                const takerFeeRate = parseFloat(takerFee) / 100; // Convert percentage to decimal
+
+                if (!entry || !stop || !loss || !minTradingUnit || !makerFee || !takerFee || 
+                    entry <= 0 || stop <= 0 || loss <= 0 || minTradingUnit <= 0 || makerFee < 0 || takerFee < 0) {
+                    setResult({ error: 'Please enter valid positive numbers' });
+                    return;
+                }
+
+                if (tradeType === 'long' && stop >= entry) {
+                    setResult({ error: 'For long positions, stop-loss must be lower than entry price' });
+                    return;
+                }
+                if (tradeType === 'short' && stop <= entry) {
+                    setResult({ error: 'For short positions, stop-loss must be higher than entry price' });
+                    return;
+                }
+
+                let riskPerUnit;
+                if (tradeType === 'long') {
+                    const entryFee = entry * makerFeeRate;
+                    const stopFee = stop * takerFeeRate;
+                    riskPerUnit = (entry - stop) + entryFee + stopFee;
+                } else {
+                    const entryFee = entry * makerFeeRate;
+                    const stopFee = stop * takerFeeRate;
+                    riskPerUnit = (stop - entry) + entryFee + stopFee;
+                }
+                
+                const calculatedQuantity = loss / riskPerUnit;
+                // Round down to nearest minimum trading unit
+                const quantity = Math.floor(calculatedQuantity / minTradingUnit) * minTradingUnit;
+                
+                // Check if quantity is at least one minimum unit
+                if (quantity < minTradingUnit) {
+                    setResult({ 
+                        error: `Calculated quantity (${calculatedQuantity.toFixed(4)}) is less than minimum trading unit (${minTradingUnit}). Increase your max loss or adjust other parameters.` 
+                    });
+                    return;
+                }
+                
+                const totalInvestment = quantity * entry;
+                
+                // Best case: Maker fee for entry (0.02%)
+                const totalEntryFeeMaker = totalInvestment * makerFeeRate;
+                // Worst case: Taker fee for entry (0.05%)
+                const totalEntryFeeTaker = totalInvestment * takerFeeRate;
+                
+                const totalStopAmount = quantity * stop;
+                // Stop loss is always taker (market order)
+                const totalStopFee = totalStopAmount * takerFeeRate;
+                
+                // Fee ranges
+                const totalFeesBest = totalEntryFeeMaker + totalStopFee;
+                const totalFeesWorst = totalEntryFeeTaker + totalStopFee;
+                
+                const totalCostBest = totalInvestment + totalEntryFeeMaker;
+                const totalCostWorst = totalInvestment + totalEntryFeeTaker;
+                
+                // Actual loss range
+                const riskPerUnitBest = (tradeType === 'long' ? (entry - stop) : (stop - entry)) + (entry * makerFeeRate) + (stop * takerFeeRate);
+                const riskPerUnitWorst = (tradeType === 'long' ? (entry - stop) : (stop - entry)) + (entry * takerFeeRate) + (stop * takerFeeRate);
+                
+                const actualLossBest = quantity * riskPerUnitBest;
+                const actualLossWorst = quantity * riskPerUnitWorst;
+
+                // Calculate take-profit levels (1.5x and 2x profit after fees)
+                // Use worst case (highest fees) to ensure at least 1.5x and 2x profit
+                // For long: takeProfit = entry + (targetProfit / quantity) + fees
+                // For short: takeProfit = entry - (targetProfit / quantity) - fees
+                
+                const calculateTakeProfit = (multiplier) => {
+                    // Use worst case loss (with taker fee on entry)
+                    const targetProfit = multiplier * actualLossWorst;
+                    // Assume taker fee on exit as well (worst case)
+                    const takeProfitFee = takerFeeRate;
+                    
+                    if (tradeType === 'long') {
+                        // Long: sell at higher price
+                        // targetProfit = quantity * (takeProfit - entry) - (quantity * takeProfit * takeProfitFee)
+                        // Solve for takeProfit
+                        const takeProfit = (targetProfit + quantity * entry) / (quantity * (1 - takeProfitFee));
+                        return takeProfit;
+                    } else {
+                        // Short: buy back at lower price
+                        // targetProfit = quantity * (entry - takeProfit) - (quantity * takeProfit * takeProfitFee)
+                        // Solve for takeProfit
+                        const takeProfit = (quantity * entry - targetProfit) / (quantity * (1 + takeProfitFee));
+                        return takeProfit;
+                    }
+                };
+                
+                const takeProfit1_5x = calculateTakeProfit(1.5);
+                const takeProfit2x = calculateTakeProfit(2);
+                const takeProfit3x = calculateTakeProfit(3);
+
+                setResult({
+                    quantity: quantity.toFixed(4),
+                    totalInvestment: totalInvestment.toFixed(2),
+                    totalEntryFeeMaker: totalEntryFeeMaker.toFixed(2),
+                    totalEntryFeeTaker: totalEntryFeeTaker.toFixed(2),
+                    totalStopFee: totalStopFee.toFixed(2),
+                    totalFeesBest: totalFeesBest.toFixed(2),
+                    totalFeesWorst: totalFeesWorst.toFixed(2),
+                    totalCostBest: totalCostBest.toFixed(2),
+                    totalCostWorst: totalCostWorst.toFixed(2),
+                    actualLossBest: actualLossBest.toFixed(2),
+                    actualLossWorst: actualLossWorst.toFixed(2),
+                    takeProfit1_5x: takeProfit1_5x.toFixed(2),
+                    takeProfit2x: takeProfit2x.toFixed(2),
+                    takeProfit3x: takeProfit3x.toFixed(2),
+                    makerFeePercent: makerFee,
+                    takerFeePercent: takerFee
+                });
+            };
+
+            const reset = () => {
+                setEntryPrice('');
+                setStopLoss('');
+                setMaxLoss('');
+                setMinUnit('0.001');
+                setMakerFee('0.02');
+                setTakerFee('0.05');
+                setResult(null);
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
+                    <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl p-8">
+                        <div className="flex items-center gap-3 mb-8">
+                            <Calculator />
+                            <h1 className="text-3xl font-bold text-gray-800">Trading Position Calculator</h1>
+                        </div>
+
+                        <div className="space-y-6">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-3">Trade Type</label>
+                                <div className="flex gap-4">
+                                    <button
+                                        onClick={() => setTradeType('long')}
+                                        className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
+                                            tradeType === 'long'
+                                                ? 'bg-green-600 text-white shadow-lg'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        <TrendingUp />
+                                        Long (Buy)
+                                    </button>
+                                    <button
+                                        onClick={() => setTradeType('short')}
+                                        className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
+                                            tradeType === 'short'
+                                                ? 'bg-red-600 text-white shadow-lg'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        <TrendingDown />
+                                        Short (Sell)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Entry Price ($)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={entryPrice}
+                                    onChange={(e) => setEntryPrice(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    placeholder="e.g., 100.00"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Stop-Loss Price ($)
+                                    {tradeType === 'long' && (
+                                        <span className="text-xs text-gray-500 ml-2">(must be lower than entry)</span>
+                                    )}
+                                    {tradeType === 'short' && (
+                                        <span className="text-xs text-gray-500 ml-2">(must be higher than entry)</span>
+                                    )}
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={stopLoss}
+                                    onChange={(e) => setStopLoss(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    placeholder={tradeType === 'long' ? 'e.g., 95.00' : 'e.g., 105.00'}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Acceptable Loss ($)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={maxLoss}
+                                    onChange={(e) => setMaxLoss(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    placeholder="e.g., 500.00"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Minimum Trading Unit
+                                    <span className="text-xs text-gray-500 ml-2">(default: 0.001)</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.001"
+                                    value={minUnit}
+                                    onChange={(e) => setMinUnit(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    placeholder="e.g., 0.001"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Maker Fee (%)
+                                        <span className="text-xs text-gray-500 ml-2">(default: 0.02)</span>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={makerFee}
+                                        onChange={(e) => setMakerFee(e.target.value)}
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                        placeholder="e.g., 0.02"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Taker Fee (%)
+                                        <span className="text-xs text-gray-500 ml-2">(default: 0.05)</span>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={takerFee}
+                                        onChange={(e) => setTakerFee(e.target.value)}
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                        placeholder="e.g., 0.05"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={calculate}
+                                    className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
+                                >
+                                    Calculate
+                                </button>
+                                <button
+                                    onClick={reset}
+                                    className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+                                >
+                                    Reset
+                                </button>
+                            </div>
+
+                            {result && (
+                                <div className="mt-6 p-6 bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl border border-indigo-200">
+                                    {result.error ? (
+                                        <p className="text-red-600 font-medium">{result.error}</p>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <h2 className="text-xl font-bold text-gray-800 mb-4">Results</h2>
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-600">Quantity to {tradeType === 'long' ? 'Buy' : 'Short'}:</span>
+                                                <span className="font-bold text-gray-900">{result.quantity} units</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-600">Total Investment:</span>
+                                                <span className="font-bold text-gray-900">${result.totalInvestment}</span>
+                                            </div>
+                                            
+                                            <div className="mt-4 pt-3 border-t border-gray-200">
+                                                <div className="text-sm font-semibold text-gray-700 mb-2">Fee Scenarios:</div>
+                                                <div className="flex justify-between text-sm">
+                                                    <span className="text-gray-600">Entry as Maker ({result.makerFeePercent}%):</span>
+                                                    <span className="font-bold text-gray-900">${result.totalEntryFeeMaker}</span>
+                                                </div>
+                                                <div className="flex justify-between text-sm">
+                                                    <span className="text-gray-600">Entry as Taker ({result.takerFeePercent}%):</span>
+                                                    <span className="font-bold text-gray-900">${result.totalEntryFeeTaker}</span>
+                                                </div>
+                                                <div className="flex justify-between text-sm mt-1">
+                                                    <span className="text-gray-600">Stop-Loss (Taker {result.takerFeePercent}%):</span>
+                                                    <span className="font-bold text-gray-900">${result.totalStopFee}</span>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-600">Total Operation Fees:</span>
+                                                <span className="font-bold text-orange-600">${result.totalFeesBest} ~ ${result.totalFeesWorst}</span>
+                                            </div>
+                                            <div className="flex justify-between border-t border-indigo-300 pt-2">
+                                                <span className="text-gray-600">Total Cost:</span>
+                                                <span className="font-bold text-indigo-600 text-lg">${result.totalCostBest} ~ ${result.totalCostWorst}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-600">Actual Max Loss:</span>
+                                                <span className="font-bold text-red-600">${result.actualLossBest} ~ ${result.actualLossWorst}</span>
+                                            </div>
+                                            
+                                            <div className="mt-4 pt-3 border-t border-green-200 bg-green-50 -mx-6 px-6 py-3">
+                                                <div className="text-sm font-semibold text-green-800 mb-3">Take-Profit Targets (Guaranteed):</div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-700">1.5x Profit Price:</span>
+                                                    <span className="font-bold text-green-600">${result.takeProfit1_5x}</span>
+                                                </div>
+                                                <div className="flex justify-between mt-2">
+                                                    <span className="text-gray-700">2x Profit Price:</span>
+                                                    <span className="font-bold text-green-700">${result.takeProfit2x}</span>
+                                                </div>
+                                                <div className="flex justify-between mt-2">
+                                                    <span className="text-gray-700">3x Profit Price:</span>
+                                                    <span className="font-bold text-green-800">${result.takeProfit3x}</span>
+                                                </div>
+                                                <div className="text-xs text-gray-600 mt-2">
+                                                    * Calculated using worst-case fees to guarantee at least 1.5x, 2x, and 3x profit
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                            <p className="text-sm text-yellow-800">
+                                <strong>Note:</strong> This calculator helps you determine position size based on your risk tolerance. 
+                                <strong className="block mt-1">Long:</strong> Buy low, sell high. Stop-loss below entry.
+                                <strong className="block mt-1">Short:</strong> Sell high, buy back low. Stop-loss above entry.
+                                <strong className="block mt-1">Maker Fee:</strong> Limit orders that add liquidity (挂单手续费).
+                                <strong className="block mt-1">Taker Fee:</strong> Market orders that remove liquidity (吃单手续费).
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<TradingCalculator />, document.getElementById('root'));
+    </script>
+</body>
+</html>
